@@ -42,33 +42,40 @@ def construir_filtros(unidade, tabela_alias="f"):
 
 def get_eixos_sql(tipo_pergunta, unidade):
     conn = get_db_connection()
+
+    def construir_filtros(unidade, tabela_alias="f"):
+        filtros = []
+        params = []
+        if unidade and unidade != "Todos":
+            filtros.append(f"{tabela_alias}.SiglaLotação = ?") 
+            params.append(unidade)
+        return " AND ".join(filtros) if filtros else "1=1", params
+
     where_clause, params = construir_filtros(unidade)
-    
-    term_search = f"%{tipo_pergunta}%"
-    final_params = [term_search] + params
-    
+    final_params = params  # ⚠️ Sem filtro por TipoPergunta!
+
     query = f"""
         SELECT 
-            tp.GrupoDePergunta as eixo,
+            tp.GrupoDePergunta AS eixo,
             CAST(AVG(
                 CASE 
                     WHEN TRIM(f.Resposta) IN ('Concordo', 'Sim', 'Concordo Totalmente', 'Satisfatório', 'Ótimo', 'Bom') THEN 100
                     WHEN TRIM(f.Resposta) IN ('Discordo', 'Não', 'Discordo Totalmente', 'Ruim', 'Péssimo') THEN 0
                     ELSE NULL 
                 END
-            ) AS INTEGER) as score
+            ) AS INTEGER) AS score
         FROM fAvaliacao f
-        JOIN dTipoPergunta tp ON f.TipoPergunta = tp.TipoPergunta
-        WHERE f.TipoPergunta LIKE ? 
-          AND {where_clause}
+        JOIN dPergunta p ON f.ID_Pergunta = p.ID_Pergunta
+        JOIN dTipoPergunta tp ON p.TipoPergunta = tp.TipoPergunta
+        WHERE {where_clause}
         GROUP BY tp.GrupoDePergunta
         HAVING score IS NOT NULL
         ORDER BY score DESC
     """
-    
+
     try:
         df = conn.execute(query, final_params).df()
-        
+
         dados_processados = []
         for _, row in df.iterrows():
             score = row['score']
@@ -78,7 +85,7 @@ def get_eixos_sql(tipo_pergunta, unidade):
                 cor, icon, peso_lbl, peso_cls = "card-yellow", "fa-triangle-exclamation", "Importante", "badge-mid"
             else:
                 cor, icon, peso_lbl, peso_cls = "card-green", "fa-circle-check", "Médio", "badge-low"
-            
+
             dados_processados.append({
                 "eixo": row['eixo'],
                 "score": score,
@@ -86,7 +93,7 @@ def get_eixos_sql(tipo_pergunta, unidade):
                 "icon": icon,
                 "peso_info": {"label": peso_lbl, "class": peso_cls}
             })
-        
+
         media_geral = int(df['score'].mean()) if not df.empty else 0
         return media_geral, dados_processados
     except Exception as e:
@@ -467,10 +474,10 @@ def server(input, output, session):
     barras_curso = reactive.Value(get_ranking_sql("Cursos", "Todos"))
     dist_curso = reactive.Value(get_distribuicao_sql("Cursos", "Todos"))
 
-    dados_disc = reactive.Value(get_eixos_sql("Disciplinas", "Todos"))
-    donut_disc = reactive.Value(get_donut_sql("Disciplinas", "Todos"))
-    barras_disc = reactive.Value(get_ranking_sql("Disciplinas", "Todos"))
-    dist_disc = reactive.Value(get_distribuicao_sql("Disciplinas", "Todos"))
+    dados_disc = reactive.Value(get_eixos_sql("Disciplina", "Todos"))
+    donut_disc = reactive.Value(get_donut_sql("Disciplina", "Todos"))
+    barras_disc = reactive.Value(get_ranking_sql("Disciplina", "Todos"))
+    dist_disc = reactive.Value(get_distribuicao_sql("Disciplina", "Todos"))
 
     # Updates (Only Unit)
     @reactive.effect
