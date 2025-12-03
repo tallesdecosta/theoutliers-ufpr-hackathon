@@ -207,6 +207,133 @@ def get_unidades_disponiveis():
         conn.close()
         return ["Todos"] + df['SiglaLotação'].tolist()
     except: return ["Todos"]
+def get_eixos_sql_disciplina(modalidade, disciplina):
+    conn = get_db_connection()
+
+    query = f"""
+        SELECT 
+            tp.GrupoDePergunta AS eixo,
+            CAST(AVG(
+                CASE 
+                    WHEN TRIM(f.Resposta) IN ('Concordo', 'Sim', 'Concordo Totalmente', 'Satisfatório', 'Ótimo', 'Bom') THEN 100
+                    WHEN TRIM(f.Resposta) IN ('Discordo', 'Não', 'Discordo Totalmente', 'Ruim', 'Péssimo') THEN 0
+                    ELSE NULL 
+                END
+            ) AS INTEGER) AS score
+        FROM fAvaliacao f
+        JOIN dPergunta p ON f.ID_Pergunta = p.ID_Pergunta
+        JOIN dTipoPergunta tp ON p.TipoPergunta = tp.TipoPergunta
+        JOIN dDisciplina d ON f.Cod_Disciplina = d.Cod_Disciplina
+        WHERE d.Modalidade = ?
+          AND (d.Nome_Disciplina = ? OR ? = 'Todas')
+        GROUP BY tp.GrupoDePergunta
+        HAVING score IS NOT NULL
+        ORDER BY score DESC
+    """
+
+    try:
+        df = conn.execute(query, [modalidade, disciplina, disciplina]).df()
+        
+        dados_processados = []
+        for _, row in df.iterrows():
+            score = row['score']
+            if score < 60:
+                cor, icon, peso_lbl, peso_cls = "card-red", "fa-circle-down", "Crítico", "badge-high"
+            elif score <= 75:
+                cor, icon, peso_lbl, peso_cls = "card-yellow", "fa-triangle-exclamation", "Importante", "badge-mid"
+            else:
+                cor, icon, peso_lbl, peso_cls = "card-green", "fa-circle-check", "Médio", "badge-low"
+
+            dados_processados.append({
+                "eixo": row['eixo'],
+                "score": score,
+                "class": cor,
+                "icon": icon,
+                "peso_info": {"label": peso_lbl, "class": peso_cls}
+            })
+
+        media_geral = int(df['score'].mean()) if not df.empty else 0
+        return media_geral, dados_processados
+
+    finally:
+        conn.close()
+def get_donut_sql_disciplina(modalidade, disciplina):
+    conn = get_db_connection()
+
+    query = f"""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN TRIM(Resposta) IN ('Concordo', 'Sim', 'Concordo Totalmente', 'Satisfatório', 'Ótimo', 'Bom') THEN 1 ELSE 0 END) as concordo,
+            SUM(CASE WHEN TRIM(Resposta) IN ('Desconheço', 'Indiferente', 'Neutro') THEN 1 ELSE 0 END) as neutro,
+            SUM(CASE WHEN TRIM(Resposta) IN ('Discordo', 'Não', 'Discordo Totalmente', 'Ruim', 'Péssimo') THEN 1 ELSE 0 END) as discordo
+        FROM fAvaliacao f
+        JOIN dDisciplina d ON f.Cod_Disciplina = d.Cod_Disciplina
+        WHERE d.Modalidade = ?
+          AND (d.Nome_Disciplina = ? OR ? = 'Todas')
+    """
+
+    try:
+        df = conn.execute(query, [modalidade, disciplina, disciplina]).df()
+        if df.empty or df.iloc[0]['total'] == 0:
+            return {"total": 0, "concordo": 0, "neutro": 0, "discordo": 0}
+        return df.iloc[0].to_dict()
+
+    finally:
+        conn.close()
+def get_ranking_sql_disciplina(modalidade, disciplina):
+    conn = get_db_connection()
+
+    query = f"""
+        SELECT 
+            d.Nome_Disciplina as label,
+            CAST(AVG(
+                CASE 
+                    WHEN TRIM(f.Resposta) IN ('Concordo', 'Sim') THEN 100
+                    WHEN TRIM(f.Resposta) IN ('Discordo', 'Não') THEN 0
+                    ELSE NULL 
+                END
+            ) AS INTEGER) as value
+        FROM fAvaliacao f
+        JOIN dDisciplina d ON f.Cod_Disciplina = d.Cod_Disciplina
+        WHERE d.Modalidade = ?
+          AND (d.Nome_Disciplina = ? OR ? = 'Todas')
+        GROUP BY d.Nome_Disciplina
+        HAVING value IS NOT NULL
+        ORDER BY value DESC
+        LIMIT 8
+    """
+
+    try:
+        df = conn.execute(query, [modalidade, disciplina, disciplina]).df()
+        df = df.sort_values(by="value", ascending=True)
+        return {"titulo": "Top Disciplinas", "dados": df.to_dict("records")}
+    finally:
+        conn.close()
+def get_distribuicao_sql_disciplina(modalidade, disciplina):
+    conn = get_db_connection()
+
+    query = f"""
+        SELECT 
+            CASE 
+                WHEN TRIM(Resposta) IN ('Concordo', 'Sim') THEN 100.0
+                WHEN TRIM(Resposta) IN ('Desconheço', 'Neutro') THEN 50.0
+                WHEN TRIM(Resposta) IN ('Discordo', 'Não') THEN 0.0
+                ELSE NULL
+            END as nota
+        FROM fAvaliacao f
+        JOIN dDisciplina d ON f.Cod_Disciplina = d.Cod_Disciplina
+        WHERE d.Modalidade = ?
+          AND (d.Nome_Disciplina = ? OR ? = 'Todas')
+          AND nota IS NOT NULL
+    """
+
+    try:
+        df = conn.execute(query, [modalidade, disciplina, disciplina]).df()
+        notas = df['nota'].tolist()
+        media = np.mean(notas) if notas else 0
+        return {"notas": notas, "media": media}
+    finally:
+        conn.close()
 
 # --- CSS ---
 custom_css = """
@@ -295,7 +422,6 @@ def criar_plot_donut(dados):
     wedges, texts = ax.pie(vals, colors=colors, startangle=90, wedgeprops=dict(width=0.4))
     ax.text(0, 0, f"{total}", ha='center', va='center', fontsize=22, fontweight='bold', color='#333')
     ax.legend(wedges, labels_legenda, title="Respostas", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1), frameon=False)
-    plt.tight_layout()
     fig.patch.set_alpha(0.0)
     return fig
 
@@ -351,38 +477,130 @@ def criar_plot_distribuicao(dados):
 
 # --- UI HELPER ---
 def render_page_structure(prefixo, titulo):
+
+   
+    if prefixo == "disc":
+        # Filtros ESPECÍFICOS para aba Disciplinas
+        filtro_html = tags.div(
+            # Modalidade
+            tags.div(
+                tags.label("Modalidade", style="font-weight: 500; font-size: 12px;"),
+                ui.input_select("disc_modalidade", label=None, choices=[], width="200px"),
+                style="display:flex; flex-direction:column;"
+            ),
+
+            # Nome da Disciplina
+            tags.div(
+                tags.label("Disciplina", style="font-weight: 500; font-size: 12px;"),
+                ui.input_select("disc_nome", label=None, choices=[], width="300px"),
+                style="display:flex; flex-direction:column;"
+            ),
+
+            # Botão
+            tags.div(
+                ui.input_action_button("disc_btn_filtrar", "Atualizar Dados", class_="btn-primary"),
+                style="padding-bottom: 5px;"
+            ),
+
+            class_="filter-bar"
+        )
+
+    else:
+        # Filtros originais para Institucional e Cursos
+        filtro_html = tags.div(
+            tags.div(
+                tags.label("Unidade", style="font-weight: 500; font-size: 12px;"),
+                ui.input_select(f"{prefixo}_campus", label=None, choices=[], width="200px"),
+                style="display:flex; flex-direction:column;"
+            ),
+            tags.div(
+                ui.input_action_button(f"{prefixo}_btn_filtrar", "Atualizar Dados", class_="btn-primary"),
+                style="padding-bottom: 5px;"
+            ),
+            class_="filter-bar"
+        )
+
+
     return tags.div(
         tags.h2(titulo, class_="page-title"),
-        tags.div(
-            # APENAS UNIDADE
-            tags.div(tags.label("Unidade", style="font-weight: 500; font-size: 12px;"), ui.input_select(f"{prefixo}_campus", label=None, choices=[], width="200px"), style="display:flex; flex-direction:column;"),
-            tags.div(ui.input_action_button(f"{prefixo}_btn_filtrar", "Atualizar Dados", class_="btn-primary"), style="padding-bottom: 5px;"),
-            class_="filter-bar"
-        ),
+
+        # BLOCO DE FILTRO (dinâmico conforme prefixo)
+        filtro_html,
+
+        # Card Excelência
         ui.output_ui(f"{prefixo}_card_excelencia"),
+
+        # Título + Seleção cards/radar
         tags.div(
             tags.div(
                 tags.h5("Detalhamento por Eixos", style="margin:0; margin-right: 20px; color: #666;"),
-                ui.input_radio_buttons(f"{prefixo}_view_mode", label=None, choices={"cards": "Cards", "radar": "Gráfico Radar"}, selected="cards", inline=True,),
+                ui.input_radio_buttons(
+                    f"{prefixo}_view_mode",
+                    label=None,
+                    choices={"cards": "Cards", "radar": "Gráfico Radar"},
+                    selected="cards",
+                    inline=True
+                ),
                 class_="view-toggles"
             ),
+
+            # Ordenação quando em modo cards
             ui.panel_conditional(
                 f"input.{prefixo}_view_mode === 'cards'",
-                ui.input_radio_buttons(f"{prefixo}_sort_order", label=None, choices={"asc": "Menor Nota (Crítico)", "desc": "Maior Nota"}, selected="asc", inline=True),
+                ui.input_radio_buttons(
+                    f"{prefixo}_sort_order",
+                    label=None,
+                    choices={"asc": "Menor Nota (Crítico)", "desc": "Maior Nota"},
+                    selected="asc",
+                    inline=True
+                )
             ),
+
             class_="controls-row"
         ),
-        ui.panel_conditional(f"input.{prefixo}_view_mode === 'cards'", ui.output_ui(f"{prefixo}_lista_cards")),
-        ui.panel_conditional(f"input.{prefixo}_view_mode === 'radar'", tags.div(ui.output_plot(f"{prefixo}_grafico_radar", width="100%", height="100%"), class_="radar-container")),
-        tags.hr(),
-        tags.h5("Visão Geral das Respostas", style="margin-bottom: 20px; color: #666;"),
-        ui.layout_column_wrap(
-            tags.div(tags.div("Status Geral das Respostas", class_="chart-title"), ui.output_plot(f"{prefixo}_grafico_donut", width="100%", height="100%"), class_="chart-box"),
-            tags.div(tags.div("Ranking de Destaques", class_="chart-title"), ui.output_plot(f"{prefixo}_grafico_barras", width="100%", height="100%"), class_="chart-box"),
-            tags.div(tags.div("Consistência das Avaliações", class_="chart-title"), ui.output_plot(f"{prefixo}_grafico_dist", width="100%", height="100%"), class_="chart-box"),
-            width=1/3, 
+
+        # Lista de cards
+        ui.panel_conditional(
+            f"input.{prefixo}_view_mode === 'cards'",
+            ui.output_ui(f"{prefixo}_lista_cards")
         ),
-        tags.br(), tags.br()
+
+        # Gráfico radar
+        ui.panel_conditional(
+            f"input.{prefixo}_view_mode === 'radar'",
+            tags.div(
+                ui.output_plot(f"{prefixo}_grafico_radar", width="100%", height="100%"),
+                class_="radar-container"
+            )
+        ),
+
+        tags.hr(),
+
+        # Título
+        tags.h5("Visão Geral das Respostas", style="margin-bottom: 20px; color: #666;"),
+
+        # GRADE DE GRÁFICOS
+        ui.layout_column_wrap(
+            tags.div(
+                tags.div("Status Geral das Respostas", class_="chart-title"),
+                ui.output_plot(f"{prefixo}_grafico_donut", width="100%", height="100%"),
+                class_="chart-box"
+            ),
+            tags.div(
+                tags.div("Ranking de Destaques", class_="chart-title"),
+                ui.output_plot(f"{prefixo}_grafico_barras", width="100%", height="100%"),
+                class_="chart-box"
+            ),
+            tags.div(
+                tags.div("Consistência das Avaliações", class_="chart-title"),
+                ui.output_plot(f"{prefixo}_grafico_dist", width="100%", height="100%"),
+                class_="chart-box"
+            ),
+            width=1/3,
+        ),
+
+        tags.br(),
+        tags.br()
     )
 
 app_ui = ui.page_fluid(
@@ -461,9 +679,29 @@ def server(input, output, session):
     unidades = get_unidades_disponiveis()
     ui.update_select("inst_campus", choices=unidades)
     ui.update_select("curso_campus", choices=unidades)
-    ui.update_select("disc_campus", choices=unidades)
+    conn = get_db_connection()
+    modalidades = conn.execute("SELECT DISTINCT Modalidade FROM dDisciplina ORDER BY 1").df()["Modalidade"].tolist()
+    conn.close()
+    ui.update_select("disc_modalidade", choices=modalidades)
+    ui.update_select("disc_nome", choices=["Selecione uma modalidade"])
+    @reactive.effect
+    @reactive.event(input.disc_modalidade)
+    def _():
+        mod = input.disc_modalidade()
 
+        conn = get_db_connection()
+        df = conn.execute("""
+            SELECT DISTINCT Nome_Disciplina
+            FROM dDisciplina
+            WHERE Modalidade = ?
+            ORDER BY Nome_Disciplina
+        """, [mod]).df()
+        conn.close()
+
+        disciplinas = ["Todas"] + df["Nome_Disciplina"].tolist()
+        ui.update_select("disc_nome", choices=disciplinas)
     # Initial Data (AGGREGATED - No Year)
+    
     dados_inst = reactive.Value(get_eixos_sql("Institucional", "Todos"))
     donut_inst = reactive.Value(get_donut_sql("Institucional", "Todos"))
     barras_inst = reactive.Value(get_ranking_sql("Institucional", "Todos"))
@@ -474,15 +712,16 @@ def server(input, output, session):
     barras_curso = reactive.Value(get_ranking_sql("Cursos", "Todos"))
     dist_curso = reactive.Value(get_distribuicao_sql("Cursos", "Todos"))
 
-    dados_disc = reactive.Value(get_eixos_sql("Disciplina", "Todos"))
-    donut_disc = reactive.Value(get_donut_sql("Disciplina", "Todos"))
-    barras_disc = reactive.Value(get_ranking_sql("Disciplina", "Todos"))
-    dist_disc = reactive.Value(get_distribuicao_sql("Disciplina", "Todos"))
+    # ---- DISCIPLINAS: valores iniciais "vazios" ----
+    dados_disc = reactive.Value((0, []))  # media=0, lista vazia de eixos
+    donut_disc = reactive.Value({"total": 0, "concordo": 0, "neutro": 0, "discordo": 0})
+    barras_disc = reactive.Value({"titulo": "Top Disciplinas", "dados": []})
+    dist_disc = reactive.Value({"notas": [], "media": 0})
 
-    # Updates (Only Unit)
+    # ---- FILTRO DAS ABAS INSTITUCIONAL / CURSOS (mantém como estava) ----
     @reactive.effect
     @reactive.event(input.inst_btn_filtrar)
-    def _(): 
+    def _():
         u = input.inst_campus()
         dados_inst.set(get_eixos_sql("Institucional", u))
         donut_inst.set(get_donut_sql("Institucional", u))
@@ -491,21 +730,25 @@ def server(input, output, session):
 
     @reactive.effect
     @reactive.event(input.curso_btn_filtrar)
-    def _(): 
+    def _():
         u = input.curso_campus()
         dados_curso.set(get_eixos_sql("Cursos", u))
         donut_curso.set(get_donut_sql("Cursos", u))
         barras_curso.set(get_ranking_sql("Cursos", u))
         dist_curso.set(get_distribuicao_sql("Cursos", u))
 
+    # ---- FILTRO DA ABA DISCIPLINAS (modalidade + disciplina) ----
     @reactive.effect
     @reactive.event(input.disc_btn_filtrar)
-    def _(): 
-        u = input.disc_campus()
-        dados_disc.set(get_eixos_sql("Disciplinas", u))
-        donut_disc.set(get_donut_sql("Disciplinas", u))
-        barras_disc.set(get_ranking_sql("Disciplinas", u))
-        dist_disc.set(get_distribuicao_sql("Disciplinas", u))
+    def _():
+        modalidade = input.disc_modalidade()
+        disciplina = input.disc_nome()
+
+        dados_disc.set(get_eixos_sql_disciplina(modalidade, disciplina))
+        donut_disc.set(get_donut_sql_disciplina(modalidade, disciplina))
+        barras_disc.set(get_ranking_sql_disciplina(modalidade, disciplina))
+        dist_disc.set(get_distribuicao_sql_disciplina(modalidade, disciplina))
+
 
     def render_excellence_card(media):
         if media < 60: 
