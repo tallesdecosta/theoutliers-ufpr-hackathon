@@ -1,0 +1,6 @@
+Sobre o projeto:
+Dashboard de monitoramento de respostas de avaliações para a Universidade Federal. O sistema de monitoramento tem como objetivo tornar dados em informações com valor estatístico para os professores.
+
+Funcionalidades:
+Com o nosso projeto, é possível as notas por curso, departamento e modalidade. O dashboard tem gráficos de desempenho feitos através da biblioteca Shiny, que permite maior modelagem de elementos. 
+
