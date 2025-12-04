@@ -19,7 +19,8 @@ def render_sidebar_nav():
     return tags.section(
         ui.input_action_button("btn_fechar", "✕"), 
         tags.nav(tags.ul(
-            tags.li(ui.input_action_button("nav_home", "Painel Principal", class_="btn-nav-custom")), 
+            tags.li(ui.input_action_button("nav_home", "Painel Principal", class_="btn-nav-custom")),
+            tags.li(ui.input_action_button("nav_upload", "Upload de Dados", class_="btn-nav-custom")), 
             tags.li(ui.input_action_button("nav_inst", "Institucional", class_="btn-nav-custom")), 
             tags.li(ui.input_action_button("nav_cursos", "Cursos", class_="btn-nav-custom")), 
             tags.li(ui.input_action_button("nav_disc", "Disciplinas", class_="btn-nav-custom"))
